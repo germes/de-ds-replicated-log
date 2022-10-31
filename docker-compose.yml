@@ -1,0 +1,50 @@
+version: "3.5"
+
+x-services-volume:
+  &services-volume
+  type: bind
+  source: ./log
+  target: /usr/src/log
+
+services:
+  master:
+    build:
+      context: ./
+      dockerfile: .docker/Dockerfile
+    volumes:
+      - .:/usr/src/app
+      - *services-volume
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    environment:
+      - WORK_MODE=master
+      - APP_NAME=master
+
+  secondary1:
+    build:
+      context: ./
+      dockerfile: .docker/Dockerfile
+    volumes:
+      - .:/usr/src/app
+      - *services-volume
+    ports:
+      - "8001:8000"
+    restart: unless-stopped
+    environment:
+      - WORK_MODE=secondary
+      - APP_NAME=secondary 1
+
+  secondary2:
+    build:
+      context: ./
+      dockerfile: .docker/Dockerfile
+    volumes:
+      - .:/usr/src/app
+      - *services-volume
+    ports:
+      - "8002:8000"
+    restart: unless-stopped
+    environment:
+      - WORK_MODE=secondary
+      - APP_NAME=secondary 2
