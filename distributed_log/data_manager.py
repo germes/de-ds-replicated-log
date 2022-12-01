@@ -1,11 +1,36 @@
 from distributed_log import storage
 from distributed_log.network import Server
 from distributed_log.setup_logger import logger
-import concurrent.futures
+from threading import Thread
+from threading import Condition
+from typing import Optional
 import multiprocessing
 import os
 import json
 import requests
+
+
+class CountDownLatch:
+    def __init__(self, count):
+        self.count = count
+        self.condition = Condition()
+
+    def count_down(self):
+        with self.condition:
+            if self.count == 0:
+                return
+
+            self.count -= 1
+
+            if self.count == 0:
+                self.condition.notify_all()
+
+    def wait(self):
+        with self.condition:
+            if self.count == 0:
+                return
+
+            self.condition.wait()
 
 
 class DataManager:
@@ -67,12 +92,27 @@ class DataManager:
 
         return items
 
-    def add_value(self, value: str) -> bool:
+    def __get_write_concern_or_raise_exception(self, write_concern: Optional[int] = None) -> int:
+        write_concern_all = len(self.__nodes.items()) + 1
+
+        if write_concern is None:
+            write_concern = write_concern_all  # by default use WC=ALL
+
+        if write_concern<1 or write_concern>write_concern_all:
+            msg = f'Write concern value {write_concern} is incorrect'
+            self.__log(msg, level='error')
+            raise Exception(msg)
+
+        return write_concern
+
+    def add_value(self, value: str, write_concern: Optional[int] = None) -> bool:
         """
         Add new value to the storage and replicate this across all secondaries
         Works only in Master mode
         """
-        self.__log(f'adding value: {value}')
+        write_concern = self.__get_write_concern_or_raise_exception(write_concern)
+
+        self.__log(f'adding value: {value} with WC = {write_concern}')
 
         if not self.is_master():
             msg = 'Adding new values allowed only in Master mode'
@@ -80,14 +120,14 @@ class DataManager:
             raise Exception(msg)
 
         key = self.__storage.add_value(value)
-        self.__log(f'added value `{value}`, key = {key}')
+        self.__log(f'value `{value}`, key = {key} is stored ')
 
         # on this iteration consider that data will be successfully replicated
-        self.__replicate_stored_value(key)
+        self.__replicate_stored_value(key, write_concern)
 
         # commit the value on master when it was fully replicated
         self.__storage.commit_value(key)
-        self.__log(f'committed value `{value}`, key = {key}')
+        self.__log(f'committed value `{value}`, key = {key}, WC = {write_concern}')
 
         return True
 
@@ -97,7 +137,7 @@ class DataManager:
         Returns False if value is already present in the storage and True in case of success
         Works only in Secondary mode
         """
-        self.__log(f'storing value: {key} = {value}')
+        self.__log(f'storing value with key = {key}, value = {value}')
 
         if not self.is_secondary():
             msg = 'Setting values allowed only in Secondary mode'
@@ -127,26 +167,43 @@ class DataManager:
     def is_secondary(self) -> bool:
         return self.MODE_SECONDARY == self.__mode
 
-    def __replicate_stored_value(self, key: int) -> None:
+    def __replicate_stored_value(self, key: int, write_concern: int) -> None:
         value = self.__storage.get_value(key)
 
         if value is None:
-            raise Exception("There is no value stored for Key=" + str(key))
+            raise Exception("There is no value stored for key=" + str(key))
 
         data = {
             "key": key,
             "value": value
         }
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(self.__nodes)) as executor:
-            for secondary_name, secondary in self.__nodes.items():
-                self.__log(f'Send replication request to {secondary_name}, data: {str(data)}')
-                executor.submit(self.__send_data_to_secondary, secondary, data)
+        if write_concern > 1:
+            self.__log(f'Replication for key=`{key}` with WR={write_concern} started')
+        else:
+            self.__log(f'Sending replication requests for key=`{key}` with WR={write_concern}')
 
-    def __send_data_to_secondary(self, server: Server, data: dict) -> requests.Response:
+        latch = CountDownLatch(write_concern - 1)
+
+        for secondary_name, secondary in self.__nodes.items():
+            thread = Thread(target=self.__send_data_to_secondary, args=(latch, secondary, data))
+            thread.start()
+
+        latch.wait()
+
+        if write_concern > 1:
+            self.__log(f'Replication for key=`{key}` with WR={write_concern} finished')
+        else:
+            self.__log(f'Replication requests for key=`{key}` with WR={write_concern} are sent')
+
+    def __send_data_to_secondary(self, latch: CountDownLatch, server: Server, data: dict) -> requests.Response:
         url = f'{server.get_dsn().rstrip("/")}/message'
         # in the current version, it supposes that all requests to secondary are success
-        return requests.put(url, json=data)
+        response = requests.put(url, json=data)
+
+        latch.count_down()
+
+        return response
 
 
 def get_data_manager_instance() -> DataManager:

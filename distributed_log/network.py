@@ -13,7 +13,7 @@ class Server:
     __mode: str
     __status: str
 
-    def __init__(self, dsn: str, mode: str) -> object:
+    def __init__(self, dsn: str, mode: str):
         self.__dsn = dsn
         self.__mode = mode
         self.__status = self.__STATUS_HEALTHY
@@ -34,7 +34,7 @@ class Server:
         return self.__STATUS_HEALTHY == self.__status
 
     def is_master(self) -> bool:
-        return self.__MODE_MASTER == self.__mode
+        return self.MODE_MASTER == self.__mode
 
     def is_secondary(self) -> bool:
-        return self.__MODE_SECONDARY == self.__mode
+        return self.MODE_SECONDARY == self.__mode

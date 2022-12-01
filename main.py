@@ -1,5 +1,6 @@
 import uvicorn
 from fastapi import FastAPI, Response
+from typing import Union
 from pydantic import BaseModel
 from starlette.responses import JSONResponse
 from distributed_log.data_manager import get_data_manager_instance
@@ -12,6 +13,7 @@ class DelayValue(BaseModel):
 
 class NewValue(BaseModel):
     value: str
+    write_concern: Union[int, None] = None
 
 
 class SyncValue(BaseModel):
@@ -26,9 +28,9 @@ app.delay = 0  # for imitating delay during the testing
 @app.post("/message", status_code=201)
 def add_value(inpt: NewValue, response: Response):
     try:
-        get_data_manager_instance().add_value(inpt.value)
+        get_data_manager_instance().add_value(inpt.value, inpt.write_concern)
     except BaseException as err:
-        return JSONResponse(err, status_code=405)
+        return JSONResponse(str(err), status_code=405)
 
     return True
 
