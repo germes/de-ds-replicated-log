@@ -4,6 +4,7 @@ from typing import Union
 from pydantic import BaseModel
 from starlette.responses import JSONResponse
 from distributed_log.data_manager import get_data_manager_instance
+from distributed_log.data_manager import DataManagerReadonlyModeException
 import time
 
 
@@ -25,10 +26,22 @@ app = FastAPI()
 app.delay = 0  # for imitating delay during the testing
 
 
+@app.on_event("startup")
+async def startup_event():
+    get_data_manager_instance().startup()
+
+
+@app.on_event("shutdown")
+def shutdown_event():
+    get_data_manager_instance().shutdown()
+
+
 @app.post("/message", status_code=201)
 def add_value(inpt: NewValue, response: Response):
     try:
         get_data_manager_instance().add_value(inpt.value, inpt.write_concern)
+    except DataManagerReadonlyModeException as err:
+        return JSONResponse(str(err), status_code=503)
     except BaseException as err:
         return JSONResponse(str(err), status_code=405)
 
@@ -54,6 +67,11 @@ def set_value(inpt: SyncValue, response: Response):
 @app.get("/messages", status_code=200)
 def get_data(response: Response):
     return get_data_manager_instance().get_values()
+
+
+@app.get("/heartbeat", status_code=200)
+def get_data(response: Response):
+    return get_data_manager_instance().get_heartbeat_status()
 
 
 @app.post("/delay")

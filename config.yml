@@ -1,0 +1,5 @@
+secondaries:
+  secondary_1: http://secondary1:8000/
+  secondary_2: http://secondary2:8000/
+quorum: 2
+heartbeat_interval_seconds: 1
